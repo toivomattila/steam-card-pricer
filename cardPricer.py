@@ -1,4 +1,4 @@
-import re, math, os
+import re, math, os, sys
 import datetime, time
 import urllib.request, html
 import sqlite3
@@ -6,7 +6,7 @@ import sqlite3
 ################################################################################
 # pulls the card prices from the Steam market
 def updateData(specific=""):
-  failureThreshold = 35
+  consecutiveFailureThreshold = 10
   failures = 0
 
   if specific == '':
@@ -45,13 +45,15 @@ def updateData(specific=""):
 
     # retry page if failed
     if failed:
-      print('  page failed, waiting 5 seconds to retry...')
+      print('  page failed, waiting 3 seconds to retry...')
       failures += 1
-      time.sleep(5)
-      if failures == failureThreshold:
+      time.sleep(3)
+      if failures == consecutiveFailureThreshold:
         print('too many failures, exiting...')
         exit()
       continue
+    else:
+      failures = 0
 
     if specific == '':
       print('  parsing')
@@ -71,37 +73,27 @@ def updateData(specific=""):
 
     # handle each match
     for j in range(len(names)):
-      name = names[j]
       game = games[j]
 
       # skip emoticons etc
       if 'Trading Card' not in game:
         continue
 
+      name = names[j]
       url = urls[j].replace('?filter=trading%20card','')
+      price = float(prices[j])
+      when = str(datetime.datetime.utcnow())
+      listings = int(counts[j].replace(',', ''))
 
       # add the game to DB if new
-      q = "INSERT OR IGNORE INTO games VALUES("
-      q += "'%s'" % game.replace("'", "''")
-      q += ", 0"
-      q += ")"
-      cur.execute(q)
+      q = "INSERT OR IGNORE INTO games VALUES(?, ?)"
+      cur.execute(q, (game, 0))
 
       # replace the card listing in DB with newest price
-      q = "INSERT OR REPLACE INTO cards VALUES("
-      q += "'%s'" % game.replace("'", "''")
-      q += ", '%s'" % name.replace("'", "''")
-      q += ", '%s'" % url.replace("'", "''")
-      q += ", %.2f" % float(prices[j])
-      q += ", '%s'" % str(datetime.datetime.utcnow())
-      q += ", %d" % int(counts[j].replace(',', ''))
-      q += ")"
-      try:
-        cur.execute(q)
-      except:
-        print("  failed on query:")
-        print(q)
-        exit()
+      q = "INSERT OR REPLACE INTO cards VALUES(?, ?, ?, ?, ?, ?)"
+      cur.execute(q, (game, name, url, price, when, listings))
+
+    # go to next page
     i += 1
 
   # save changes
@@ -126,7 +118,7 @@ def escape(s):
 
 ################################################################################
 # generates the HTML
-def updateSite():
+def generateSite():
   print('updating the site')
   o = open("template.html").read()
 
@@ -138,7 +130,7 @@ def updateSite():
   totalFoil = 0
 
   # insert most expensive card stats
-  q = 'select * from cards order by cost desc limit 1'
+  q = 'SELECT * FROM cards ORDER BY cost DESC LIMIT 1'
   cur.execute(q)
   a = cur.fetchone()
   o = o.replace('[EXPENSIVE-NAME]', escape(a[1]))
@@ -154,17 +146,14 @@ def updateSite():
   table += '<th class="listings">Listings</th></tr>\n'
 
   # query the card data
-  q = "select"
-  q += " g.name"
-  q += ", case when g.count = count(c.name) then sum(c.cost)"
-  q += " else sum(c.cost) * g.count / count(c.name) end as 'costforall'"
-  q += ", g.count"
-  q += ", count(c.name)"
-  q += ", sum(c.count)"
-  q += " from games g"
-  q += " inner join cards c on c.game = g.name"
-  q += " group by g.name"
-  q += " order by costforall asc;"
+  q = "SELECT g.name"
+  q += ", CASE WHEN g.count = COUNT(c.name) THEN SUM(c.cost)"
+  q += " ELSE SUM(c.cost) * g.count / COUNT(c.name) END AS 'costforall'"
+  q += ", g.count, COUNT(c.name), SUM(c.count)"
+  q += " FROM games g"
+  q += " INNER JOIN cards c on c.game = g.name"
+  q += " GROUP BY g.name"
+  q += " ORDER BY costforall asc;"
   cur.execute(q)
   a = cur.fetchall()
 
@@ -221,7 +210,7 @@ def updateSite():
   o = o.replace('[TIME]', t)
 
   # get total games
-  q = "SELECT count(*) FROM games where name not like '%Foil Trading Card%'"
+  q = "SELECT COUNT(*) FROM games WHERE name NOT LIKE '%Foil Trading Card%'"
   cur.execute(q)
   a = cur.fetchone()
   o = o.replace('[GAME-COUNT]', str(a[0]))
@@ -232,24 +221,21 @@ def updateSite():
   o = o.replace('[TOTAL]', "~${:,.2f}".format(totalFoil + totalStandard * 5))
 
   # get median prices
-  q = "SELECT"
-  q += " cost"
-  q += " FROM (select * from cards"
-  q += " where game not like '%Foil Trading Card%') as nf"
-  q += " ORDER BY cost"
-  q += " LIMIT 1"
+  q = "SELECT cost"
+  q += " FROM (SELECT * FROM cards"
+  q += " WHERE game NOT LIKE '%Foil Trading Card%') AS nf"
+  q += " ORDER BY cost LIMIT 1"
   q += " OFFSET (SELECT COUNT(*) FROM ("
-  q += "select * from cards where game not like '%Foil Trading Card%') as nf" 
+  q += "SELECT * FROM cards WHERE game NOT LIKE '%Foil Trading Card%') AS nf" 
   q += ") / 2"
+
   cur.execute(q)
   a = cur.fetchone()
   o = o.replace('[MEDIAN-STANDARD-PRICE]', "${:,.2f}".format(a[0]))
 
-  q = "SELECT cost FROM (select * from cards where game like '%Foil Trading Card%') as nf ORDER BY cost LIMIT 1 OFFSET (SELECT COUNT(*) FROM (select * from cards where game like '%Foil Trading Card%') as nf ) / 2"
-  cur.execute(q)
+  cur.execute(q.replace('NOT LIKE', 'LIKE'))
   a = cur.fetchone()
   o = o.replace('[MEDIAN-FOIL-PRICE]', "${:,.2f}".format(a[0]))
-  
 
   # finish up
   con.close()
@@ -259,7 +245,7 @@ def updateSite():
 
 ################################################################################
 # updates the total card counts as info is available
-def updateCounts():
+def fixCounts():
   print('updating set counts')
 
   con = sqlite3.connect('data.sqlite')
@@ -267,7 +253,10 @@ def updateCounts():
 
   # selects specified number of cards for a game and also the current count
   # of cards
-  q = "select g.name, g.count, count(c.url) from games g inner join cards c on c.game = g.name where g.name not like '%Foil Trading Card%' group by g.name"
+  q = "SELECT g.name, g.count, COUNT(c.url) FROM games g"
+  q += " INNER JOIN cards c ON c.game = g.name"
+  q += " WHERE g.name NOT LIKE '%Foil Trading Card%'"
+  q += " GROUP BY g.name"
   cur.execute(q)
   a = cur.fetchall()
   for b in a:
@@ -275,14 +264,14 @@ def updateCounts():
     target = b[1]
     counted = b[2]
 
-    q = "update games set count = %d where name = '%s'" % (counted, game.replace("'", "''"))
-    cur.execute(q)
+    q = "UPDATE games SET count = ? WHERE name = ?"
+    cur.execute(q, (counted, game))
     target = counted
 
     # copy standard set counts to foil sets
     game = game.replace('Trading Card', 'Foil Trading Card')
-    q = "insert or replace into games values('%s', %d)" % (game.replace("'", "''"), target)
-    cur.execute(q)
+    q = "INSERT OR REPLACE INTO games VALUES(?, ?)"
+    cur.execute(q, (game, target))
 
   con.commit()
   con.close()
@@ -298,7 +287,7 @@ def upload():
 ################################################################################
 # Program entrypoint.
 if __name__ == "__main__":
-  updateData()
-  updateCounts()
-  updateSite()
-  upload()
+  updateData()   if '-noupdate'   not in sys.argv else ''
+  fixCounts()    if '-nofix'      not in sys.argv else ''
+  generateSite() if '-nogenerate' not in sys.argv else ''
+  upload()       if '-noupload'   not in sys.argv else ''
