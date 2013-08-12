@@ -16,7 +16,9 @@ th { text-align: left; cursor: pointer; }
 
 .left-col, .right-col { width: 46.5%; float: left; }
 .left-col { margin-right: 5%; }
-#stats, #source, #similar { width: 100%; }
+#stats, #source, #similar, #notice { width: 100%; }
+#notice { background: #ed9; }
+#notice p { padding: 10px; }
 #info { padding-top: 20px; clear: both; }
 
 @media only screen and (max-device-width: 799px), only screen and (max-width: 799px) {
