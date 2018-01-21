@@ -36,7 +36,7 @@ def updateData(specific=""):
 
     # decode contents
     if not failed:
-      contents = contents.decode('unicode-escape')
+      contents = contents.decode('utf-8', 'ignore')
       contents = contents.replace('\\/','/')
 
       # internal API failure or market down
@@ -45,9 +45,9 @@ def updateData(specific=""):
 
     # retry page if failed
     if failed:
-      print('  page failed, waiting 3 seconds to retry...')
+      print('  page failed, waiting 5 minutes to retry...')
       failures += 1
-      time.sleep(3)
+      time.sleep(300)
       if failures == consecutiveFailureThreshold:
         print('too many failures, exiting...')
         exit()
