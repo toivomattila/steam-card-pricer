@@ -2,6 +2,7 @@ import re, math, os, sys
 import datetime, time
 import urllib.request, html
 import sqlite3
+import csv
 
 ################################################################################
 # pulls the card prices from the Steam market
@@ -285,9 +286,31 @@ def upload():
   os.system('git push')
 
 ################################################################################
+# generates csv
+def exportCSV():
+  print('generating csv')
+
+  con = sqlite3.connect('data.sqlite')
+  cur = con.cursor()
+  q = "SELECT * FROM cards"
+  cur.execute(q)
+  a = cur.fetchall()
+  with open('cards.csv', 'w', newline='') as csvfile:
+    spamwriter = csv.writer(csvfile, delimiter=',', quotechar=',', quoting=csv.QUOTE_MINIMAL)
+    for b in a:
+      spamwriter.writerow(b)
+      print(b)
+  con.close()
+
+################################################################################
 # Program entrypoint.
 if __name__ == "__main__":
-  updateData()   if '-noupdate'   not in sys.argv else ''
-  fixCounts()    if '-nofix'      not in sys.argv else ''
-  generateSite() if '-nogenerate' not in sys.argv else ''
-  upload()       if '-noupload'   not in sys.argv else ''
+  #updateData()   if '-noupdate'   not in sys.argv else ''
+  updateData()   if '-update'   in sys.argv else ''
+  #fixCounts()    if '-nofix'      not in sys.argv else ''
+  fixCounts()    if '-fix'      in sys.argv else ''
+  #generateSite() if '-nogenerate' not in sys.argv else ''
+  generateSite() if '-generate' in sys.argv else ''
+  #upload()       if '-noupload'   not in sys.argv else ''
+  upload()       if '-upload'   in sys.argv else ''
+  exportCSV()    if '-csv'      in sys.argv else ''
